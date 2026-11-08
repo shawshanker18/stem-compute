@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       heads: { description: 'JSON {"part1-simulation": "<sha>", ...}', required: true }
-      batch: { description: "batch file inside part3-simulation, e.g. batches/selftest.json", required: true }
+      batch: { description: "batch file path on part3-simulation's farm/batches branch", required: true }
+      batch_ref: { description: "commit of farm/batches holding the batch", required: true }
       ids:   { description: "JSON list of case ids", required: true }
       tag:   { description: "unique run tag", required: true }
       foam:  { description: "install OpenFOAM (apt) for native runs", default: "true" }
@@ -39,16 +40,18 @@ jobs:
           key5: ${{ secrets.DEPLOY_KEY_P5 }}
           foam: ${{ inputs.image == '' && inputs.foam || 'false' }}
           python: ${{ inputs.image == '' && 'true' || 'false' }}
+      - uses: actions/checkout@v4
+        with: { repository: "shawshanker18/part3-simulation", ref: "${{ inputs.batch_ref }}", ssh-key: "${{ secrets.DEPLOY_KEY_P3 }}", path: ws/_batches, persist-credentials: false, sparse-checkout: batches }
       - name: Case ${{ matrix.id }}
         run: |
           mkdir -p out
           t0=$(date +%s)
           set +e
           if [ -z "${{ inputs.image }}" ]; then
-            python ws/part3-simulation/compute/worker.py --batch "${{ inputs.batch }}" --id ${{ matrix.id }} --out out > out/worker.log 2>&1
+            python ws/part3-simulation/compute/worker.py --batch "$PWD/ws/_batches/${{ inputs.batch }}" --id ${{ matrix.id }} --out out > out/worker.log 2>&1
           else
             docker run --rm --shm-size=2g -v "$PWD/ws:/ws" -v "$PWD/out:/out" -e RUNNER_NAME -e GITHUB_REPOSITORY -e GITHUB_RUN_ID \
-              "${{ inputs.image }}" python /ws/part3-simulation/compute/worker.py --batch "${{ inputs.batch }}" --id ${{ matrix.id }} --out /out > out/worker.log 2>&1
+              "${{ inputs.image }}" python /ws/part3-simulation/compute/worker.py --batch "/ws/_batches/${{ inputs.batch }}" --id ${{ matrix.id }} --out /out > out/worker.log 2>&1
           fi
           code=$?
           echo "case ${{ matrix.id }}: exit $code, $(( $(date +%s) - t0 )) s"
