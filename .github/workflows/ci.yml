@@ -1,0 +1,77 @@
+name: ci
+run-name: ${{ inputs.tag }}
+
+# The merge gate of common file 5.3, on GitHub: the eight test suites in parallel, and the golden
+# car G1 rebuilt and compared. Public log: one summary line per suite, nothing else. Full logs are
+# sealed (compute/ci.py opens them).
+on:
+  workflow_dispatch:
+    inputs:
+      heads: { description: 'JSON {"part1-simulation": "<sha or branch>", ...}', required: true }
+      tag:   { description: "unique run tag", required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [part1-simulation/body, part2-simulation/cfd, part2-simulation/race, part4-simulation/components,
+              part3-simulation/compute, part3-simulation/measure, part3-simulation/search, part5-simulation/car]
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/workspace
+        with:
+          heads: ${{ inputs.heads }}
+          key1: ${{ secrets.DEPLOY_KEY_P1 }}
+          key2: ${{ secrets.DEPLOY_KEY_P2 }}
+          key3: ${{ secrets.DEPLOY_KEY_P3 }}
+          key4: ${{ secrets.DEPLOY_KEY_P4 }}
+          key5: ${{ secrets.DEPLOY_KEY_P5 }}
+      - name: pytest
+        run: |
+          mkdir -p out
+          set +e
+          (cd ws/${{ matrix.dir }} && timeout 6000 python -m pytest tests -q -p no:cacheprovider) > out/pytest.log 2>&1
+          code=$?
+          echo "$code" > out/exit_code
+          echo "${{ matrix.dir }}: exit $code | $(grep -E '^[0-9]+ (passed|failed)|^=+ .*(passed|failed|error).* =+$|no tests ran' out/pytest.log | tail -1 | tr -d '=')"
+          exit $code
+      - if: always()
+        uses: ./.github/actions/pack
+        with: { src: out, name: "suite-${{ strategy.job-index }}" }
+
+  golden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/workspace
+        with:
+          heads: ${{ inputs.heads }}
+          key1: ${{ secrets.DEPLOY_KEY_P1 }}
+          key2: ${{ secrets.DEPLOY_KEY_P2 }}
+          key3: ${{ secrets.DEPLOY_KEY_P3 }}
+          key4: ${{ secrets.DEPLOY_KEY_P4 }}
+          key5: ${{ secrets.DEPLOY_KEY_P5 }}
+      - name: G1 rebuilds unchanged
+        run: |
+          mkdir -p out
+          set +e
+          cd ws/part5-simulation/car
+          python run_car.py --out ../../../out/G1 --body-json '{}' --skin-mm 3.93 > ../../../out/build.log 2>&1
+          b=$?
+          python checks/golden.py compare ../golden/G1.fp.json ../../../out/G1 > ../../../out/compare.log 2>&1
+          c=$?
+          cd ../../..
+          echo "build exit $b, compare exit $c, same car: $(grep -ci 'same car' out/compare.log)"
+          [ $b -eq 0 ] && [ $c -eq 0 ]
+      - if: always()
+        uses: ./.github/actions/pack
+        with: { src: out, name: golden }
