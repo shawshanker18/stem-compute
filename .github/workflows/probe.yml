@@ -1,0 +1,7 @@
+name: probe
+on: [workflow_dispatch, push]
+jobs:
+  p:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "nproc $(nproc) mem $(free -g | awk '/Mem/{print $2}')"; docker --version
