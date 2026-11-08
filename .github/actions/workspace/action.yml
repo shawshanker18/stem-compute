@@ -1,0 +1,51 @@
+name: workspace
+description: >
+  The five private repositories side by side in ws/, cloned read-only with deploy keys,
+  Python 3.13 with docker/requirements.lock, and optionally ESI OpenFOAM v2412 from apt.
+  Prints nothing from the code.
+inputs:
+  heads: { description: 'JSON {"part1-simulation": "<sha or branch>", ...}', required: true }
+  owner: { default: shawshanker18 }
+  key1: { required: true }
+  key2: { required: true }
+  key3: { required: true }
+  key4: { required: true }
+  key5: { required: true }
+  foam: { description: "'true' installs OpenFOAM v2412", default: "false" }
+  python: { description: "'false' skips the Python packages (a job that runs inside the image)", default: "true" }
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with: { repository: "${{ inputs.owner }}/part1-simulation", ref: "${{ fromJSON(inputs.heads)['part1-simulation'] }}", ssh-key: "${{ inputs.key1 }}", path: ws/part1-simulation, persist-credentials: false }
+    - uses: actions/checkout@v4
+      with: { repository: "${{ inputs.owner }}/part2-simulation", ref: "${{ fromJSON(inputs.heads)['part2-simulation'] }}", ssh-key: "${{ inputs.key2 }}", path: ws/part2-simulation, persist-credentials: false }
+    - uses: actions/checkout@v4
+      with: { repository: "${{ inputs.owner }}/part3-simulation", ref: "${{ fromJSON(inputs.heads)['part3-simulation'] }}", ssh-key: "${{ inputs.key3 }}", path: ws/part3-simulation, persist-credentials: false }
+    - uses: actions/checkout@v4
+      with: { repository: "${{ inputs.owner }}/part4-simulation", ref: "${{ fromJSON(inputs.heads)['part4-simulation'] }}", ssh-key: "${{ inputs.key4 }}", path: ws/part4-simulation, persist-credentials: false }
+    - uses: actions/checkout@v4
+      with: { repository: "${{ inputs.owner }}/part5-simulation", ref: "${{ fromJSON(inputs.heads)['part5-simulation'] }}", ssh-key: "${{ inputs.key5 }}", path: ws/part5-simulation, persist-credentials: false }
+    - if: inputs.python == 'true'
+      uses: actions/setup-python@v5
+      with: { python-version: "3.13", cache: pip, cache-dependency-path: ws/part3-simulation/docker/requirements.lock }
+    - if: inputs.python == 'true'
+      shell: bash
+      run: |
+        t0=$(date +%s)
+        python -m pip install -q -r ws/part3-simulation/docker/requirements.lock > pip.log 2>&1 || { tail -5 pip.log; exit 1; }
+        echo "pip: $(( $(date +%s) - t0 )) s"
+    - if: inputs.foam == 'true'
+      shell: bash
+      run: |
+        t0=$(date +%s)
+        curl -s https://dl.openfoam.com/add-debian-repo.sh | sudo bash > foam.log 2>&1
+        sudo apt-get install -y -qq openfoam2412-default >> foam.log 2>&1 || { tail -20 foam.log; exit 1; }
+        echo "FOAM_BASHRC=/usr/lib/openfoam/openfoam2412/etc/bashrc" >> "$GITHUB_ENV"
+        echo "openfoam: $(( $(date +%s) - t0 )) s"
+    - shell: bash
+      run: |
+        echo "OMPI_MCA_hwloc_base_use_hwthreads_as_cpus=1" >> "$GITHUB_ENV"
+        echo "OMPI_MCA_rmaps_base_oversubscribe=1" >> "$GITHUB_ENV"
+        echo "PYTHONUNBUFFERED=1" >> "$GITHUB_ENV"
+        echo "machine: nproc $(nproc), mem $(free -g | awk '/Mem/{print $2}') GB"
