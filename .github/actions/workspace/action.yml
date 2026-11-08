@@ -35,6 +35,12 @@ runs:
         t0=$(date +%s)
         python -m pip install -q -r ws/part3-simulation/docker/requirements.lock > pip.log 2>&1 || { tail -5 pip.log; exit 1; }
         echo "pip: $(( $(date +%s) - t0 )) s"
+    - if: inputs.python == 'true'
+      shell: bash
+      run: |
+        # pymeshlab's filter plugins load only with these (else "Filter does not exist")
+        (for i in 1 2 3 4 5 6; do timeout 90 sudo apt-get update -qq > /dev/null 2>&1 && break; done)
+        sudo apt-get install -y -qq libgl1 libglu1-mesa libegl1 libopengl0 libgomp1 libxkbcommon0 > libs.log 2>&1 || { tail -5 libs.log; exit 1; }
     - if: inputs.foam == 'true'
       shell: bash
       run: |
