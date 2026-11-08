@@ -14,10 +14,13 @@ on:
       tag:   { description: "unique run tag", required: true }
       foam:  { description: "install OpenFOAM (apt) for native runs", default: "true" }
       image: { description: "run inside this container image (Docker), empty = native apt recipe", default: "" }
+      family_from: { description: "run id whose family artifact the jobs need (morph jobs), empty = none", default: "" }
+      family_cases: { description: 'JSON {"<case id>": <family base case id in that run>}', default: "{}" }
 
 permissions:
   contents: read
   packages: read
+  actions: read
 
 jobs:
   case:
@@ -43,6 +46,21 @@ jobs:
           python: ${{ inputs.image == '' && 'true' || 'false' }}
       - uses: actions/checkout@v4
         with: { repository: "shawshanker18/part3-simulation", ref: "${{ inputs.batch_ref }}", ssh-key: "${{ secrets.DEPLOY_KEY_P3 }}", path: ws/_batches, persist-credentials: false, sparse-checkout: batches }
+      - if: inputs.family_from != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: family-${{ fromJSON(inputs.family_cases)[format('{0}', matrix.id)] }}
+          run-id: ${{ inputs.family_from }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: fam_sealed
+      - if: inputs.family_from != ''
+        name: Family mesh
+        env: { FAMILY_KEY: "${{ secrets.FAMILY_KEY }}" }
+        run: |
+          mkdir -p ws/_family
+          openssl enc -d -aes-256-cbc -pbkdf2 -in fam_sealed/family.enc -pass env:FAMILY_KEY | tar -xzf - -C ws/_family
+          rm -rf fam_sealed
+          echo "family: $(ls ws/_family | wc -l) folder(s)"
       - name: Registry (the image is private until made public)
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin > /dev/null 2>&1 || true
       - name: Case ${{ matrix.id }}
@@ -51,7 +69,7 @@ jobs:
           t0=$(date +%s)
           set +e
           if [ -z "${{ inputs.image }}" ]; then
-            python ws/part3-simulation/compute/worker.py --batch "$PWD/ws/_batches/${{ inputs.batch }}" --id ${{ matrix.id }} --out out > out/worker.log 2>&1
+            STEM_FAMILY_EXPORT=$PWD/family_export STEM_FAMILY_DIR=$PWD/ws/_family python ws/part3-simulation/compute/worker.py --batch "$PWD/ws/_batches/${{ inputs.batch }}" --id ${{ matrix.id }} --out out > out/worker.log 2>&1
           else
             docker run --rm --shm-size=2g -v "$PWD/ws:/ws" -v "$PWD/out:/out" -e RUNNER_NAME -e GITHUB_REPOSITORY -e GITHUB_RUN_ID \
               "${{ inputs.image }}" python /ws/part3-simulation/compute/worker.py --batch "/ws/_batches/${{ inputs.batch }}" --id ${{ matrix.id }} --out /out > out/worker.log 2>&1
@@ -62,3 +80,13 @@ jobs:
       - if: always()
         uses: ./.github/actions/pack
         with: { src: out, name: "result-${{ matrix.id }}" }
+      - if: always() && hashFiles('family_export/**') != ''
+        name: Seal the family mesh (for the morph jobs; symmetric key held only by the farm)
+        env: { FAMILY_KEY: "${{ secrets.FAMILY_KEY }}" }
+        run: |
+          mkdir -p fam_out
+          tar -czf - -C family_export . | openssl enc -aes-256-cbc -pbkdf2 -salt -out fam_out/family.enc -pass env:FAMILY_KEY
+          echo "family sealed $(du -sh fam_out | cut -f1)"
+      - if: always() && hashFiles('fam_out/family.enc') != ''
+        uses: actions/upload-artifact@v4
+        with: { name: "family-${{ matrix.id }}", path: fam_out/, retention-days: 30 }
