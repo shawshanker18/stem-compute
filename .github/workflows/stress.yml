@@ -1,0 +1,55 @@
+name: stress
+run-name: ${{ inputs.tag }}
+
+# Random cars across every setting's full range, no CFD (part5-simulation/car/checks/stress_cars.py),
+# one machine per seed. Public log: the count of cars built per machine; results sealed.
+on:
+  workflow_dispatch:
+    inputs:
+      heads: { description: 'JSON {"part1-simulation": "<sha or branch>", ...}', required: true }
+      tag: { required: true }
+      machines: { default: "20" }
+      cars_per_machine: { default: "10" }
+      seed_base: { default: "0" }
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs: { seeds: "${{ steps.p.outputs.seeds }}" }
+    steps:
+      - id: p
+        run: echo "seeds=$(python3 -c 'import json;print(json.dumps(list(range(${{ inputs.machines }}))))')" >> "$GITHUB_OUTPUT"
+  cars:
+    needs: setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: ${{ fromJSON(needs.setup.outputs.seeds) }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/workspace
+        with:
+          heads: ${{ inputs.heads }}
+          key1: ${{ secrets.DEPLOY_KEY_P1 }}
+          key2: ${{ secrets.DEPLOY_KEY_P2 }}
+          key3: ${{ secrets.DEPLOY_KEY_P3 }}
+          key4: ${{ secrets.DEPLOY_KEY_P4 }}
+          key5: ${{ secrets.DEPLOY_KEY_P5 }}
+      - name: Build random cars
+        run: |
+          mkdir -p out
+          set +e
+          (cd ws/part5-simulation/car && python -W ignore checks/stress_cars.py --seed $(( ${{ matrix.seed }} + ${{ inputs.seed_base }} )) \
+             --n ${{ inputs.cars_per_machine }} --out $GITHUB_WORKSPACE/out) > out/stress.log 2>&1
+          code=$?
+          echo "seed ${{ matrix.seed }}: exit $code, $(grep -c '^car ' out/stress.log) car lines"
+          exit $code
+      - if: always()
+        uses: ./.github/actions/pack
+        with: { src: out, name: "stress-${{ matrix.seed }}" }
