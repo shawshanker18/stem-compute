@@ -1,0 +1,35 @@
+name: image
+run-name: ${{ inputs.tag }}
+
+# Builds part3-simulation/docker/Dockerfile (OpenFOAM v2412 + the locked Python packages, no
+# project code) and pushes ghcr.io/<owner>/stem-cfd. The digest is printed for accounts.json.
+on:
+  workflow_dispatch:
+    inputs:
+      heads: { description: 'JSON {"part1-simulation": "<sha or branch>", ...}', required: true }
+      tag:   { required: true }
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { repository: "shawshanker18/part3-simulation", ref: "${{ fromJSON(inputs.heads)['part3-simulation'] }}", ssh-key: "${{ secrets.DEPLOY_KEY_P3 }}", path: ws/part3-simulation, persist-credentials: false }
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.repository_owner }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: b
+        uses: docker/build-push-action@v6
+        with:
+          context: ws/part3-simulation
+          file: ws/part3-simulation/docker/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/stem-cfd:latest
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - run: echo "digest ghcr.io/${{ github.repository_owner }}/stem-cfd@${{ steps.b.outputs.digest }}"
