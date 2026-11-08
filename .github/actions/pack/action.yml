@@ -1,0 +1,29 @@
+name: pack
+description: >
+  Seal a folder for a public repository: tar, AES-256 with a fresh random key, the key wrapped
+  with the project's RSA public key (part3-simulation/compute/result_pub.pem). Only the holder of
+  the private key can open it (compute/seal.py). Uploads the sealed pair as one artifact.
+inputs:
+  src: { required: true }
+  name: { required: true }
+  retention: { default: "14" }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.src }}" sealed_${{ inputs.name }}
+        d=sealed_${{ inputs.name }}
+        tar -czf payload.tgz -C "${{ inputs.src }}" .
+        openssl rand -hex 32 > k.txt
+        openssl enc -aes-256-cbc -pbkdf2 -salt -in payload.tgz -out $d/payload.enc -pass file:k.txt
+        openssl pkeyutl -encrypt -pubin -inkey ws/part3-simulation/compute/result_pub.pem \
+          -pkeyopt rsa_padding_mode:oaep -in k.txt -out $d/key.enc
+        rm -f k.txt payload.tgz
+        echo "sealed $(du -sh $d | cut -f1)"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.name }}
+        path: sealed_${{ inputs.name }}/
+        retention-days: ${{ inputs.retention }}
