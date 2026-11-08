@@ -1,0 +1,33 @@
+name: capacity
+run-name: ${{ inputs.tag }}
+
+# How many jobs this account really runs at once: n jobs that each hold a runner for hold_s
+# seconds. compute/capacity.py reads the jobs' start and end times from the API.
+on:
+  workflow_dispatch:
+    inputs:
+      n:      { default: "45" }
+      hold_s: { default: "240" }
+      tag:    { required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs: { ids: "${{ steps.p.outputs.ids }}" }
+    steps:
+      - id: p
+        run: echo "ids=$(python3 -c 'import json;print(json.dumps(list(range(${{ inputs.n }}))))')" >> "$GITHUB_OUTPUT"
+  hold:
+    needs: setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix:
+        i: ${{ fromJSON(needs.setup.outputs.ids) }}
+    steps:
+      - run: sleep ${{ inputs.hold_s }}
