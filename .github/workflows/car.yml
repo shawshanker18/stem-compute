@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   case:
@@ -42,6 +43,8 @@ jobs:
           python: ${{ inputs.image == '' && 'true' || 'false' }}
       - uses: actions/checkout@v4
         with: { repository: "shawshanker18/part3-simulation", ref: "${{ inputs.batch_ref }}", ssh-key: "${{ secrets.DEPLOY_KEY_P3 }}", path: ws/_batches, persist-credentials: false, sparse-checkout: batches }
+      - name: Registry (the image is private until made public)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin > /dev/null 2>&1 || true
       - name: Case ${{ matrix.id }}
         run: |
           mkdir -p out
