@@ -1,0 +1,58 @@
+name: car
+run-name: ${{ inputs.tag }}            # dispatch.py / collect.py find the run by this tag
+
+# The farm: one job per case of a batch committed in part3-simulation. The code stays private:
+# each job clones the five repositories read-only (deploy keys), prints nothing from them, and
+# uploads its results sealed with the project's public key. Triggers: dispatch only.
+on:
+  workflow_dispatch:
+    inputs:
+      heads: { description: 'JSON {"part1-simulation": "<sha>", ...}', required: true }
+      batch: { description: "batch file inside part3-simulation, e.g. batches/selftest.json", required: true }
+      ids:   { description: "JSON list of case ids", required: true }
+      tag:   { description: "unique run tag", required: true }
+      foam:  { description: "install OpenFOAM (apt) for native runs", default: "true" }
+      image: { description: "run inside this container image (Docker), empty = native apt recipe", default: "" }
+
+permissions:
+  contents: read
+
+jobs:
+  case:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix:
+        id: ${{ fromJSON(inputs.ids) }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/workspace
+        with:
+          heads: ${{ inputs.heads }}
+          key1: ${{ secrets.DEPLOY_KEY_P1 }}
+          key2: ${{ secrets.DEPLOY_KEY_P2 }}
+          key3: ${{ secrets.DEPLOY_KEY_P3 }}
+          key4: ${{ secrets.DEPLOY_KEY_P4 }}
+          key5: ${{ secrets.DEPLOY_KEY_P5 }}
+          foam: ${{ inputs.image == '' && inputs.foam || 'false' }}
+          python: ${{ inputs.image == '' && 'true' || 'false' }}
+      - name: Case ${{ matrix.id }}
+        run: |
+          mkdir -p out
+          t0=$(date +%s)
+          set +e
+          if [ -z "${{ inputs.image }}" ]; then
+            python ws/part3-simulation/compute/worker.py --batch "${{ inputs.batch }}" --id ${{ matrix.id }} --out out > out/worker.log 2>&1
+          else
+            docker run --rm --shm-size=2g -v "$PWD/ws:/ws" -v "$PWD/out:/out" -e RUNNER_NAME -e GITHUB_REPOSITORY -e GITHUB_RUN_ID \
+              "${{ inputs.image }}" python /ws/part3-simulation/compute/worker.py --batch "${{ inputs.batch }}" --id ${{ matrix.id }} --out /out > out/worker.log 2>&1
+          fi
+          code=$?
+          echo "case ${{ matrix.id }}: exit $code, $(( $(date +%s) - t0 )) s"
+          exit $code
+      - if: always()
+        uses: ./.github/actions/pack
+        with: { src: out, name: "result-${{ matrix.id }}" }
